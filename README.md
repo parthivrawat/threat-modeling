@@ -35,6 +35,7 @@ threat model can be:
 | **Go**       | `github.com/parthivrawat/threat-modeling/go`                                 | [Go README](go/README.md)      |
 | **Python**   | `pip install threat-modeling-py`                                             | [Python README](python/README.md) |
 | **TypeScript** | `npm install threat-modeling-ts`                                           | [TypeScript README](typescript/README.md) |
+| **Rust**       | `cargo add threat-modeling-rs`                                             | [Rust README](rust/README.md)             |
 
 ## Quick Example
 

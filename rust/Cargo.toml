@@ -1,0 +1,14 @@
+[package]
+name = "threat-modeling-rs"
+version = "1.0.0"
+edition = "2021"
+authors = ["Parthiv Rawat <parthiv05022000@gmail.com>"]
+license = "MIT"
+description = "Threat Modeling as Code - a declarative STRIDE threat-modeling library for Rust"
+repository = "https://github.com/parthivrawat/threat-modeling"
+homepage = "https://github.com/parthivrawat/threat-modeling/tree/main/rust"
+readme = "README.md"
+keywords = ["threat", "threat-modeling", "stride", "security", "risk"]
+categories = ["development-tools", "security"]
+
+[dependencies]

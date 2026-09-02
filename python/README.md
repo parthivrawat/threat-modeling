@@ -60,7 +60,7 @@ for threat in app.analyze():
 
 ## Cross-Language Support
 
-This library is also available for [Go](../go/README.md) and [TypeScript](../typescript/README.md).
+This library is also available for [Go](../go/README.md), [TypeScript](../typescript/README.md), and [Rust](../rust/README.md).
 
 ## Development
 

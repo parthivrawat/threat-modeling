@@ -73,7 +73,7 @@ for (const threat of app.analyze()) {
 
 ## Cross-Language Support
 
-This library is also available for [Go](../go/README.md) and [Python](../python/README.md).
+This library is also available for [Go](../go/README.md), [Python](../python/README.md), and [Rust](../rust/README.md).
 
 ## Development
 

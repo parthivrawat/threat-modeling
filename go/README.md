@@ -95,7 +95,7 @@ func main() {
 
 ## Cross-Language Support
 
-This library is also available for [Python](../python/README.md) and [TypeScript](../typescript/README.md).
+This library is also available for [Python](../python/README.md), [TypeScript](../typescript/README.md), and [Rust](../rust/README.md).
 
 ## Development
 
