@@ -1,13 +1,19 @@
 # Threat Modeling as Code (Go)
 
-A declarative threat-modeling library for Go. Express your system as
-components, trust boundaries, and data flows, then analyze it with the STRIDE
+A declarative, code-first threat-modeling library for Go. Express your system as
+components, trust boundaries, and data flows, then analyze it with the **STRIDE**
 methodology to get actionable, version-controlled mitigations.
 
 ## Features
 
 - Declarative `Model`, `Component`, `Boundary`, and `DataFlow` types
-- STRIDE threat classification: **Spoofing**, **Tampering**, **Repudiation**, **Information Disclosure**, **Denial of Service**, **Elevation of Privilege**
+- **STRIDE** threat classification:
+  - Spoofing
+  - Tampering
+  - Repudiation
+  - Information Disclosure
+  - Denial of Service
+  - Elevation of Privilege
 - Trust-boundary-aware data flow analysis
 - Built-in, context-aware mitigation catalog
 - Zero runtime dependencies
@@ -51,6 +57,14 @@ func main() {
         log.Fatal(err)
     }
 
+    if err := m.AddDataFlow(threatmodel.NewDataFlow("request", "browser", "api", threatmodel.FlowOpts{
+        Protocol:  "https",
+        Auth:      "bearer",
+        DataTypes: []string{"payment-card"},
+    })); err != nil {
+        log.Fatal(err)
+    }
+
     threats, err := m.Analyze()
     if err != nil {
         log.Fatal(err)
@@ -65,6 +79,24 @@ func main() {
 }
 ```
 
+## Core Concepts
+
+- `Model` — the top-level container for components, boundaries, and data flows.
+- `Component` — a service, API, database, browser, or any architectural element.
+- `Boundary` — a trust boundary; `Untrusted` marks external zones such as the internet.
+- `DataFlow` — a directed interaction between two components.
+- `Threat` — a `STRIDE` finding with a target, description, and list of mitigations.
+
+## Why Threat Modeling as Code?
+
+- **Version control:** threat models live in the same repo as the architecture.
+- **Automation:** run `Analyze()` in CI to catch changes in risk posture.
+- **Consistency:** use the same model across languages and teams.
+
+## Cross-Language Support
+
+This library is also available for [Python](../python/README.md) and [TypeScript](../typescript/README.md).
+
 ## Development
 
 ```bash
@@ -72,22 +104,6 @@ cd implementations/security/threat-modeling/go
 go mod tidy
 go test ./...
 go build ./...
-```
-
-## Publishing to pkg.go.dev
-
-1. Commit the `go/` directory to a public Git repository at `github.com/parthivrawat/threat-modeling`.
-2. Push a version tag using the `go/` prefix:
-
-```bash
-git tag go/v1.0.0
-git push origin go/v1.0.0
-```
-
-3. pkg.go.dev will index the package automatically. Visit:
-
-```
-https://pkg.go.dev/github.com/parthivrawat/threat-modeling/go@v1.0.0
 ```
 
 ## License
