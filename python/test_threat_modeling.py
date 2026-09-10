@@ -1,8 +1,19 @@
 """Tests for the threat_modeling package."""
 
+import random
+
 import pytest
 
-from threat_modeling import Boundary, Component, DataFlow, Model, ThreatKind
+from threat_modeling import (
+    Boundary,
+    Component,
+    DataFlow,
+    Model,
+    Severity,
+    Threat,
+    ThreatKind,
+    ThreatStatus,
+)
 
 
 def test_component_defaults():
@@ -78,18 +89,48 @@ def test_data_flow_threats():
     )
 
 
+def test_flow_mitigated_status():
+    app = Model("mitigated-flow")
+    app.add(Component("browser", component_type="browser"))
+    app.add(Component("api", component_type="api", exposed=True))
+    app.add(
+        Boundary(
+            "internet",
+            untrusted=True,
+            contains=["browser"],
+            trusts=["api"],
+        )
+    )
+    app.add(
+        DataFlow(
+            "login",
+            "browser",
+            "api",
+            protocol="https",
+            auth="bearer",
+            data_types=["credentials"],
+        )
+    )
+
+    threats = {th.kind: th for th in app.analyze() if th.target == "login"}
+    assert threats[ThreatKind.SPOOFING].status == ThreatStatus.MITIGATED
+    assert threats[ThreatKind.TAMPERING].status == ThreatStatus.MITIGATED
+    assert threats[ThreatKind.INFORMATION_DISCLOSURE].status == ThreatStatus.OPEN
+    assert threats[ThreatKind.ELEVATION_OF_PRIVILEGE].status == ThreatStatus.MITIGATED
+    assert threats[ThreatKind.REPUDIATION].status == ThreatStatus.OPEN
+    assert threats[ThreatKind.DENIAL_OF_SERVICE].status == ThreatStatus.OPEN
+
+
 def test_analyze_validation():
     app = Model("bad-boundary")
     app.add(Component("a"))
-    app.add(Boundary("b", contains=["missing"]))
     with pytest.raises(ValueError):
-        app.analyze()
+        app.add(Boundary("b", contains=["missing"]))
 
     app2 = Model("bad-flow")
     app2.add(Component("a"))
-    app2.add(DataFlow("f", "a", "missing"))
     with pytest.raises(ValueError):
-        app2.analyze()
+        app2.add(DataFlow("f", "a", "missing"))
 
     app3 = Model("dup")
     c = Component("a")
@@ -100,7 +141,106 @@ def test_analyze_validation():
 
 def test_analyze_sorting():
     app = Model("sorted")
-    app.add(Component("b"))
-    app.add(Component("a"))
+    app.add(Component("b", stores=["user-data"]))
+    app.add(Component("a", stores=["user-data"]))
     threats = app.analyze()
     assert threats[0].target == "a"
+
+
+def test_flow_crosses_boundary_nested():
+    app = Model("nested-boundaries")
+    app.add(Component("browser", component_type="browser"))
+    app.add(Component("api", component_type="api"))
+    app.add(Component("db", component_type="database"))
+    app.add(
+        Boundary(
+            "internet",
+            untrusted=True,
+            contains=["browser"],
+            trusts=["api"],
+        )
+    )
+    app.add(
+        Boundary(
+            "dmz",
+            contains=["api"],
+            trusts=["db"],
+        )
+    )
+    app.add(DataFlow("b2a", "browser", "api"))
+    app.add(DataFlow("a2d", "api", "db"))
+
+    for flow in app._flows.values():
+        assert app._flow_crosses_boundary(flow) is True
+
+
+def test_flow_sensitive_data_case_insensitive():
+    app = Model("case-insensitive")
+    app.add(Component("browser", component_type="browser"))
+    app.add(Component("api", component_type="api", exposed=True))
+    app.add(
+        Boundary(
+            "internet",
+            untrusted=True,
+            contains=["browser"],
+            trusts=["api"],
+        )
+    )
+    app.add(
+        DataFlow(
+            "login",
+            "browser",
+            "api",
+            protocol="https",
+            auth="bearer",
+            data_types=["PII"],
+        )
+    )
+
+    threats = app.analyze()
+    info = next(
+        th
+        for th in threats
+        if th.target == "login" and th.kind == ThreatKind.INFORMATION_DISCLOSURE
+    )
+    assert "Mask or tokenize sensitive data fields" in info.mitigations
+
+
+def test_threat_display():
+    threat = Threat(
+        ThreatKind.SPOOFING,
+        "api",
+        "desc",
+        [],
+        ThreatStatus.OPEN,
+        Severity.LOW,
+    )
+    assert str(threat) == "Spoofing on api"
+
+
+def test_analyze_property():
+    random.seed(0)
+    n = random.randint(5, 10)
+    for i in range(n):
+        app = Model(f"prop-{i}")
+        app.add(Component(f"api-{i}", component_type="api", exposed=True))
+        app.add(Component(f"db-{i}", stores=["user-data"]))
+        if random.random() < 0.8:
+            app.add(
+                DataFlow(
+                    f"flow-{i}",
+                    f"api-{i}",
+                    f"db-{i}",
+                    data_types=["user-data"],
+                )
+            )
+        threats = app.analyze()
+        assert threats
+        for th in threats:
+            assert th.target
+            assert th.kind in ThreatKind
+
+    invalid = Model("invalid-flow")
+    invalid.add(Component("only"))
+    with pytest.raises(ValueError):
+        invalid.add(DataFlow("bad", "only", "missing-target"))

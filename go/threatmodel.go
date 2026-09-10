@@ -23,13 +23,15 @@ type Component struct {
 type ComponentOpts struct {
 	Type        string
 	Environment string
+	RunsIn      string
 	Stores      []string
 	Handles     []string
 	Exposed     bool
 }
 
 // NewComponent creates a Component with the provided identifier and options.
-func NewComponent(id, name string, opts ...ComponentOpts) *Component {
+// If name is empty, it defaults to id. Pass nil for opts when no options are needed.
+func NewComponent(id, name string, opts *ComponentOpts) *Component {
 	c := &Component{
 		ID:   id,
 		Name: name,
@@ -38,17 +40,18 @@ func NewComponent(id, name string, opts ...ComponentOpts) *Component {
 	if c.Name == "" {
 		c.Name = c.ID
 	}
-	if len(opts) > 0 {
-		o := opts[0]
-		if o.Type != "" {
-			c.Type = o.Type
+	if opts != nil {
+		if opts.Type != "" {
+			c.Type = opts.Type
 		}
-		if o.Environment != "" {
-			c.Environment = o.Environment
+		if opts.Environment != "" {
+			c.Environment = opts.Environment
+		} else if opts.RunsIn != "" {
+			c.Environment = opts.RunsIn
 		}
-		c.Stores = append([]string(nil), o.Stores...)
-		c.Handles = append([]string(nil), o.Handles...)
-		c.Exposed = o.Exposed
+		c.Stores = append([]string(nil), opts.Stores...)
+		c.Handles = append([]string(nil), opts.Handles...)
+		c.Exposed = opts.Exposed
 	}
 	return c
 }
@@ -73,7 +76,8 @@ type BoundaryOpts struct {
 }
 
 // NewBoundary creates a Boundary with the provided identifier and options.
-func NewBoundary(id, name string, opts ...BoundaryOpts) *Boundary {
+// If name is empty, it defaults to id. Pass nil for opts when no options are needed.
+func NewBoundary(id, name string, opts *BoundaryOpts) *Boundary {
 	b := &Boundary{
 		ID:   id,
 		Name: name,
@@ -81,11 +85,10 @@ func NewBoundary(id, name string, opts ...BoundaryOpts) *Boundary {
 	if b.Name == "" {
 		b.Name = b.ID
 	}
-	if len(opts) > 0 {
-		o := opts[0]
-		b.Untrusted = o.Untrusted
-		b.Contains = append([]string(nil), o.Contains...)
-		b.Trusts = append([]string(nil), o.Trusts...)
+	if opts != nil {
+		b.Untrusted = opts.Untrusted
+		b.Contains = append([]string(nil), opts.Contains...)
+		b.Trusts = append([]string(nil), opts.Trusts...)
 	}
 	return b
 }
@@ -108,17 +111,17 @@ type FlowOpts struct {
 }
 
 // NewDataFlow creates a DataFlow from source to target with the given options.
-func NewDataFlow(id, source, target string, opts ...FlowOpts) *DataFlow {
+// Pass nil for opts when no options are needed.
+func NewDataFlow(id, source, target string, opts *FlowOpts) *DataFlow {
 	f := &DataFlow{
 		ID:     id,
 		Source: source,
 		Target: target,
 	}
-	if len(opts) > 0 {
-		o := opts[0]
-		f.Protocol = o.Protocol
-		f.Auth = o.Auth
-		f.DataTypes = append([]string(nil), o.DataTypes...)
+	if opts != nil {
+		f.Protocol = opts.Protocol
+		f.Auth = opts.Auth
+		f.DataTypes = append([]string(nil), opts.DataTypes...)
 	}
 	return f
 }
@@ -174,6 +177,16 @@ func (m *Model) AddBoundary(b *Boundary) error {
 	if _, exists := m.boundaries[b.ID]; exists {
 		return fmt.Errorf("boundary ID already exists: %s", b.ID)
 	}
+	for _, cid := range b.Contains {
+		if _, ok := m.components[cid]; !ok {
+			return fmt.Errorf("boundary %q references unknown component %q", b.ID, cid)
+		}
+	}
+	for _, cid := range b.Trusts {
+		if _, ok := m.components[cid]; !ok {
+			return fmt.Errorf("boundary %q references unknown component %q", b.ID, cid)
+		}
+	}
 	m.boundaries[b.ID] = b
 	return nil
 }
@@ -194,8 +207,32 @@ func (m *Model) AddDataFlow(f *DataFlow) error {
 	if _, exists := m.flows[f.ID]; exists {
 		return fmt.Errorf("data flow ID already exists: %s", f.ID)
 	}
+	if _, ok := m.components[f.Source]; !ok {
+		return fmt.Errorf("data flow %q references unknown source %q", f.ID, f.Source)
+	}
+	if _, ok := m.components[f.Target]; !ok {
+		return fmt.Errorf("data flow %q references unknown target %q", f.ID, f.Target)
+	}
+	if f.Source == f.Target {
+		return fmt.Errorf("data flow %q is self-referential", f.ID)
+	}
 	m.flows[f.ID] = f
 	return nil
+}
+
+// Add adds a Component, Boundary, or DataFlow to the model. It dispatches to the
+// typed AddComponent, AddBoundary, or AddDataFlow methods.
+func (m *Model) Add(item any) error {
+	switch v := item.(type) {
+	case *Component:
+		return m.AddComponent(v)
+	case *Boundary:
+		return m.AddBoundary(v)
+	case *DataFlow:
+		return m.AddDataFlow(v)
+	default:
+		return fmt.Errorf("unsupported item type %T", item)
+	}
 }
 
 // Analyze validates the model and returns all STRIDE threats with their
@@ -220,7 +257,7 @@ func (m *Model) Analyze() ([]*Threat, error) {
 	for _, id := range flowIDs {
 		f := m.flows[id]
 		crossing := m.flowCrossesBoundary(f)
-		sensitive := flowHasSensitiveData(f)
+		sensitive := FlowHasSensitiveData(f)
 		threats = appendFlowThreats(threats, f, crossing, sensitive)
 	}
 

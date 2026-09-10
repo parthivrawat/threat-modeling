@@ -9,18 +9,22 @@ from .model import (
     Component,
     DataFlow,
     Model,
+    Severity,
     Threat,
     ThreatKind,
+    ThreatStatus,
 )
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 __all__ = [
     "Boundary",
     "Component",
     "DataFlow",
     "Model",
+    "Severity",
     "Threat",
     "ThreatKind",
+    "ThreatStatus",
     "__version__",
 ]

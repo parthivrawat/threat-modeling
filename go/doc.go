@@ -9,7 +9,7 @@
 //
 //	m := threatmodel.New("payment-api")
 //
-//	c := threatmodel.NewComponent("api", "Payment API", threatmodel.ComponentOpts{
+//	c := threatmodel.NewComponent("api", "Payment API", threatmodel.&ComponentOpts{
 //	    Type:        "api",
 //	    Environment: "k8s",
 //	    Stores:      []string{"user-data"},
@@ -19,7 +19,7 @@
 //	    log.Fatal(err)
 //	}
 //
-//	b := threatmodel.NewBoundary("internet", "Internet", threatmodel.BoundaryOpts{
+//	b := threatmodel.NewBoundary("internet", "Internet", threatmodel.&BoundaryOpts{
 //	    Untrusted: true,
 //	    Trusts:    []string{"api"},
 //	})
