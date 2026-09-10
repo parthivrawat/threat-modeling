@@ -37,6 +37,44 @@ impl fmt::Display for ThreatKind {
     }
 }
 
+/// The mitigation status of a threat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThreatStatus {
+    /// The threat is active; no direct control is in place.
+    Open,
+    /// The user has supplied a control that directly addresses this threat.
+    Mitigated,
+}
+
+impl fmt::Display for ThreatStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ThreatStatus::Open => write!(f, "Open"),
+            ThreatStatus::Mitigated => write!(f, "Mitigated"),
+        }
+    }
+}
+
+/// The severity of a threat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Severity {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+impl fmt::Display for Severity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Severity::Low => write!(f, "Low"),
+            Severity::Medium => write!(f, "Medium"),
+            Severity::High => write!(f, "High"),
+            Severity::Critical => write!(f, "Critical"),
+        }
+    }
+}
+
 /// A single identified threat and its recommended mitigations.
 #[derive(Debug, Clone)]
 pub struct Threat {
@@ -48,6 +86,10 @@ pub struct Threat {
     pub description: String,
     /// Recommended mitigations.
     pub mitigations: Vec<String>,
+    /// Whether the threat is open or mitigated.
+    pub status: ThreatStatus,
+    /// The severity of the threat.
+    pub severity: Severity,
 }
 
 impl Threat {
@@ -57,12 +99,16 @@ impl Threat {
         target: impl Into<String>,
         description: impl Into<String>,
         mitigations: Vec<String>,
+        status: ThreatStatus,
+        severity: Severity,
     ) -> Self {
         Self {
             kind,
             target: target.into(),
             description: description.into(),
             mitigations,
+            status,
+            severity,
         }
     }
 }
@@ -321,6 +367,22 @@ impl Model {
         if self.boundaries.contains_key(&boundary.id) {
             return Err(ThreatModelError::DuplicateId(boundary.id));
         }
+        for component_id in &boundary.contains {
+            if !self.components.contains_key(component_id) {
+                return Err(ThreatModelError::UnknownComponent {
+                    reference: component_id.clone(),
+                    context: format!("boundary {} contains", boundary.id),
+                });
+            }
+        }
+        for component_id in &boundary.trusts {
+            if !self.components.contains_key(component_id) {
+                return Err(ThreatModelError::UnknownComponent {
+                    reference: component_id.clone(),
+                    context: format!("boundary {} trusts", boundary.id),
+                });
+            }
+        }
         self.boundaries.insert(boundary.id.clone(), boundary);
         Ok(())
     }
@@ -332,6 +394,18 @@ impl Model {
         }
         if flow.source == flow.target {
             return Err(ThreatModelError::SelfReferentialFlow(flow.id));
+        }
+        if !self.components.contains_key(&flow.source) {
+            return Err(ThreatModelError::UnknownComponent {
+                reference: flow.source.clone(),
+                context: format!("data flow {} source", flow.id),
+            });
+        }
+        if !self.components.contains_key(&flow.target) {
+            return Err(ThreatModelError::UnknownComponent {
+                reference: flow.target.clone(),
+                context: format!("data flow {} target", flow.id),
+            });
         }
         self.flows.insert(flow.id.clone(), flow);
         Ok(())
@@ -457,16 +531,37 @@ const SECURE_PROTOCOLS: &[&str] = &["https", "tls", "mtls", "ssh"];
 fn flow_has_sensitive_data(flow: &DataFlow) -> bool {
     flow.data_types
         .iter()
-        .any(|d| SENSITIVE_DATA_TYPES.contains(&d.as_str()))
+        .any(|d| SENSITIVE_DATA_TYPES.iter().any(|&t| t == d.to_lowercase().as_str()))
 }
 
 fn is_secure_protocol(protocol: &str) -> bool {
     SECURE_PROTOCOLS.contains(&protocol.to_lowercase().as_str())
 }
 
+fn component_has_sensitive_data(component: &Component) -> bool {
+    component
+        .stores
+        .iter()
+        .chain(component.handles.iter())
+        .any(|d| SENSITIVE_DATA_TYPES.iter().any(|&t| t == d.to_lowercase().as_str()))
+}
+
 fn component_threats(component: &Component, exposed: bool) -> Vec<Threat> {
     let mut threats = Vec::new();
     let has_data = !component.stores.is_empty() || !component.handles.is_empty();
+    let has_sensitive = component_has_sensitive_data(component);
+    let is_privileged = component.environment == "k8s"
+        || component.environment == "container"
+        || component.environment == "vm"
+        || component.component_type == "api"
+        || component.component_type == "gateway"
+        || component.component_type == "load-balancer";
+    let severity = match (exposed as u8) + (has_sensitive as u8) + (is_privileged as u8) {
+        0 => Severity::Low,
+        1 => Severity::Medium,
+        2 => Severity::High,
+        _ => Severity::Critical,
+    };
 
     if exposed
         || component.component_type == "api"
@@ -481,6 +576,8 @@ fn component_threats(component: &Component, exposed: bool) -> Vec<Threat> {
                 "Enforce strong authentication and caller identity verification".to_string(),
                 "Use mutual TLS or service identity tokens".to_string(),
             ],
+            ThreatStatus::Open,
+            severity,
         ));
     }
 
@@ -497,6 +594,8 @@ fn component_threats(component: &Component, exposed: bool) -> Vec<Threat> {
                 "Use integrity checks such as checksums or signatures".to_string(),
                 "Restrict write access to authorized actors".to_string(),
             ],
+            ThreatStatus::Open,
+            severity,
         ));
     }
 
@@ -510,6 +609,8 @@ fn component_threats(component: &Component, exposed: bool) -> Vec<Threat> {
                 "Include non-repudiable timestamps and identities".to_string(),
                 "Protect logs from tampering".to_string(),
             ],
+            ThreatStatus::Open,
+            severity,
         ));
     }
 
@@ -523,6 +624,8 @@ fn component_threats(component: &Component, exposed: bool) -> Vec<Threat> {
                 "Apply least-privilege and need-to-know access".to_string(),
                 "Mask, tokenize, or redact sensitive fields".to_string(),
             ],
+            ThreatStatus::Open,
+            severity,
         ));
     }
 
@@ -543,14 +646,16 @@ fn component_threats(component: &Component, exposed: bool) -> Vec<Threat> {
                 "Use DDoS protection, autoscaling, and load balancing".to_string(),
                 "Apply resource quotas and circuit breakers".to_string(),
             ],
+            ThreatStatus::Open,
+            severity,
         ));
     }
 
-    if component.environment == "k8s"
-        || component.environment == "container"
-        || component.environment == "vm"
+    if exposed
+        || has_data
         || component.component_type == "api"
-        || component.component_type == "service"
+        || component.component_type == "gateway"
+        || component.component_type == "load-balancer"
     {
         threats.push(Threat::new(
             ThreatKind::ElevationOfPrivilege,
@@ -564,6 +669,8 @@ fn component_threats(component: &Component, exposed: bool) -> Vec<Threat> {
                 "Use sandboxed or isolated execution environments".to_string(),
                 "Regularly patch and harden host and container images".to_string(),
             ],
+            ThreatStatus::Open,
+            severity,
         ));
     }
 
@@ -573,6 +680,21 @@ fn component_threats(component: &Component, exposed: bool) -> Vec<Threat> {
 fn flow_threats(flow: &DataFlow, crossing: bool, sensitive: bool) -> Vec<Threat> {
     let base = format!("Data flow {} from {} to {}", flow.id, flow.source, flow.target);
     let mut threats = Vec::new();
+
+    let secure = is_secure_protocol(&flow.protocol);
+    let auth_set = !flow.auth.is_empty();
+    let spoof_status = if auth_set { ThreatStatus::Mitigated } else { ThreatStatus::Open };
+    let tamp_status = if secure { ThreatStatus::Mitigated } else { ThreatStatus::Open };
+    let info_status = if secure && !sensitive { ThreatStatus::Mitigated } else { ThreatStatus::Open };
+    let ele_status = ThreatStatus::Open;
+
+    let insecure = !is_secure_protocol(&flow.protocol);
+    let severity = match (crossing as u8) + (sensitive as u8) + (insecure as u8) {
+        0 => Severity::Low,
+        1 => Severity::Medium,
+        2 => Severity::High,
+        _ => Severity::Critical,
+    };
 
     let mut spoof_mits = vec![
         "Validate the source identity before processing".to_string(),
@@ -586,6 +708,8 @@ fn flow_threats(flow: &DataFlow, crossing: bool, sensitive: bool) -> Vec<Threat>
         &flow.id,
         format!("{base} may be spoofed"),
         spoof_mits,
+        spoof_status,
+        severity,
     ));
 
     let mut tamp_mits = vec![
@@ -600,6 +724,8 @@ fn flow_threats(flow: &DataFlow, crossing: bool, sensitive: bool) -> Vec<Threat>
         &flow.id,
         format!("{base} may be tampered with in transit"),
         tamp_mits,
+        tamp_status,
+        severity,
     ));
 
     threats.push(Threat::new(
@@ -611,6 +737,8 @@ fn flow_threats(flow: &DataFlow, crossing: bool, sensitive: bool) -> Vec<Threat>
             "Protect logs from tampering".to_string(),
             "Include non-repudiable timestamps".to_string(),
         ],
+        ThreatStatus::Open,
+        severity,
     ));
 
     let mut info_mits = vec![
@@ -628,6 +756,8 @@ fn flow_threats(flow: &DataFlow, crossing: bool, sensitive: bool) -> Vec<Threat>
         &flow.id,
         format!("{base} may leak sensitive information"),
         info_mits,
+        info_status,
+        severity,
     ));
 
     let mut dos_mits = vec![
@@ -643,6 +773,8 @@ fn flow_threats(flow: &DataFlow, crossing: bool, sensitive: bool) -> Vec<Threat>
         &flow.id,
         format!("{base} may be used to deny service"),
         dos_mits,
+        ThreatStatus::Open,
+        severity,
     ));
 
     let mut ele_mits = vec![
@@ -658,6 +790,8 @@ fn flow_threats(flow: &DataFlow, crossing: bool, sensitive: bool) -> Vec<Threat>
         &flow.id,
         format!("{base} may allow privilege escalation"),
         ele_mits,
+        ele_status,
+        severity,
     ));
 
     threats
@@ -749,20 +883,29 @@ mod tests {
         assert!(threats
             .iter()
             .any(|t| t.target == "login" && t.kind == ThreatKind::InformationDisclosure));
+
+        let flow_status: HashMap<_, _> = threats
+            .iter()
+            .filter(|t| t.target == "login")
+            .map(|t| (t.kind, t.status))
+            .collect();
+        assert_eq!(flow_status[&ThreatKind::Spoofing], ThreatStatus::Mitigated);
+        assert_eq!(flow_status[&ThreatKind::Tampering], ThreatStatus::Mitigated);
+        assert_eq!(
+            flow_status[&ThreatKind::ElevationOfPrivilege],
+            ThreatStatus::Open
+        );
     }
 
     #[test]
     fn analyze_validation() {
         let mut app = Model::new("bad-boundary");
         app.add_component(Component::new("a")).unwrap();
-        app.add_boundary(Boundary::new("b").contains(&["missing"]))
-            .unwrap();
-        assert!(app.analyze().is_err());
+        assert!(app.add_boundary(Boundary::new("b").contains(&["missing"])).is_err());
 
         let mut app2 = Model::new("bad-flow");
         app2.add_component(Component::new("a")).unwrap();
-        app2.add_data_flow(DataFlow::new("f", "a", "missing")).unwrap();
-        assert!(app2.analyze().is_err());
+        assert!(app2.add_data_flow(DataFlow::new("f", "a", "missing")).is_err());
 
         let mut app3 = Model::new("dup");
         app3.add_component(Component::new("a")).unwrap();
@@ -772,15 +915,99 @@ mod tests {
     #[test]
     fn analyze_sorting() {
         let mut app = Model::new("sorted");
-        app.add_component(Component::new("b")).unwrap();
-        app.add_component(Component::new("a")).unwrap();
+        app.add_component(Component::new("b").stores(&["user-data"])).unwrap();
+        app.add_component(Component::new("a").stores(&["user-data"])).unwrap();
         let threats = app.analyze().unwrap();
         assert_eq!(threats.first().unwrap().target, "a");
     }
 
     #[test]
     fn threat_display() {
-        let t = Threat::new(ThreatKind::Spoofing, "api", "desc", vec![]);
+        let t = Threat::new(ThreatKind::Spoofing, "api", "desc", vec![], ThreatStatus::Open, Severity::Low);
         assert_eq!(t.to_string(), "Spoofing on api");
+    }
+
+    #[test]
+    fn flow_sensitive_data_case_insensitive() {
+        let flow = DataFlow::new("f", "a", "b").data_types(&["PII"]);
+        assert!(flow_has_sensitive_data(&flow));
+    }
+
+    #[test]
+    fn flow_crosses_boundary_nested() {
+        let mut app = Model::new("nested");
+        app.add_component(Component::new("browser").component_type("browser"))
+            .unwrap();
+        app.add_component(
+            Component::new("api")
+                .component_type("api")
+                .environment("k8s"),
+        )
+        .unwrap();
+        app.add_component(Component::new("db").component_type("database"))
+            .unwrap();
+        app.add_boundary(
+            Boundary::new("internet")
+                .untrusted(true)
+                .contains(&["browser"])
+                .trusts(&["api"]),
+        )
+        .unwrap();
+        app.add_boundary(
+            Boundary::new("dmz")
+                .contains(&["api"])
+                .trusts(&["db"]),
+        )
+        .unwrap();
+
+        let flow1 = DataFlow::new("browser-to-api", "browser", "api");
+        let flow2 = DataFlow::new("api-to-db", "api", "db");
+        assert!(app.flow_crosses_boundary(&flow1));
+        assert!(app.flow_crosses_boundary(&flow2));
+    }
+
+    #[test]
+    fn analyze_property() {
+        // Valid model: exposed API + database storing sensitive data,
+        // with a data flow carrying credentials.
+        let mut app = Model::new("property-valid");
+        app.add_component(
+            Component::new("api")
+                .component_type("api")
+                .exposed(true),
+        )
+        .unwrap();
+        app.add_component(Component::new("db").stores(&["user-data"]))
+            .unwrap();
+        app.add_data_flow(
+            DataFlow::new("api-to-db", "api", "db")
+                .data_types(&["credentials"]),
+        )
+        .unwrap();
+
+        let threats = app.analyze().unwrap();
+        assert!(!threats.is_empty(), "expected non-empty threats");
+
+        for t in &threats {
+            assert!(!t.target.is_empty(), "threat target must not be empty");
+            assert!(
+                matches!(
+                    t.kind,
+                    ThreatKind::Spoofing
+                        | ThreatKind::Tampering
+                        | ThreatKind::Repudiation
+                        | ThreatKind::InformationDisclosure
+                        | ThreatKind::DenialOfService
+                        | ThreatKind::ElevationOfPrivilege
+                ),
+                "unexpected threat kind {:?}",
+                t.kind
+            );
+        }
+
+        // Invalid model: data flow references a missing target.
+        let mut bad = Model::new("property-invalid");
+        bad.add_component(Component::new("a")).unwrap();
+        assert!(bad.add_data_flow(DataFlow::new("f", "a", "missing")).is_err());
     }
 }

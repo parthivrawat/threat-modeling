@@ -17,7 +17,7 @@ the **STRIDE** methodology to get actionable, version-controlled mitigations.
 - Trust-boundary-aware data flow analysis
 - Built-in, context-aware mitigation catalog
 - Zero runtime dependencies
-- Dual CommonJS/ESM exports
+- ESM-first package
 - Node.js 18+
 
 ## Installation

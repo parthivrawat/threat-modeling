@@ -1,13 +1,13 @@
 {
   "name": "threat-modeling-ts",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Threat Modeling as Code - a declarative STRIDE threat-modeling library for TypeScript/Node.js",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "require": "./dist/index.js",
       "import": "./dist/index.js"
     }
   },

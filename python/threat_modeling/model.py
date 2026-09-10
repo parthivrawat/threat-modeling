@@ -22,6 +22,28 @@ class ThreatKind(str, enum.Enum):
         return str(self.value)
 
 
+class ThreatStatus(str, enum.Enum):
+    """Whether a threat is still active or has been mitigated by a control."""
+
+    OPEN = "Open"
+    MITIGATED = "Mitigated"
+
+    def __str__(self) -> str:
+        return str(self.value)
+
+
+class Severity(str, enum.Enum):
+    """Severity rating for a threat."""
+
+    LOW = "Low"
+    MEDIUM = "Medium"
+    HIGH = "High"
+    CRITICAL = "Critical"
+
+    def __str__(self) -> str:
+        return str(self.value)
+
+
 @dataclass(frozen=True)
 class Threat:
     """A single identified threat and its recommended mitigations."""
@@ -30,6 +52,8 @@ class Threat:
     target: str
     description: str
     mitigations: List[str] = field(default_factory=list)
+    status: ThreatStatus = ThreatStatus.OPEN
+    severity: Severity = Severity.LOW
 
     def __str__(self) -> str:
         return f"{self.kind} on {self.target}"
@@ -159,6 +183,11 @@ class Model:
         with self._lock:
             if boundary.id in self._boundaries:
                 raise ValueError(f"boundary ID already exists: {boundary.id}")
+            for component_id in boundary.contains + boundary.trusts:
+                if component_id not in self._components:
+                    raise ValueError(
+                        f"boundary {boundary.id!r} references unknown component {component_id!r}"
+                    )
             self._boundaries[boundary.id] = boundary
 
     def add_data_flow(self, flow: DataFlow) -> None:
@@ -168,6 +197,14 @@ class Model:
                 raise ValueError(f"data flow ID already exists: {flow.id}")
             if flow.source == flow.target:
                 raise ValueError(f"data flow {flow.id} is self-referential")
+            if flow.source not in self._components:
+                raise ValueError(
+                    f"data flow {flow.id!r} has unknown source {flow.source!r}"
+                )
+            if flow.target not in self._components:
+                raise ValueError(
+                    f"data flow {flow.id!r} has unknown target {flow.target!r}"
+                )
             self._flows[flow.id] = flow
 
     def analyze(self) -> List[Threat]:
@@ -237,16 +274,31 @@ class Model:
 
 
 def _flow_has_sensitive_data(flow: DataFlow) -> bool:
-    return any(dtype in SENSITIVE_DATA_TYPES for dtype in flow.data_types)
+    return any(dtype.lower() in SENSITIVE_DATA_TYPES for dtype in flow.data_types)
 
 
 def _is_secure_protocol(protocol: str) -> bool:
     return protocol.lower() in SECURE_PROTOCOLS
 
 
+def component_has_sensitive_data(component: Component) -> bool:
+    """Return True if the component stores or handles sensitive data."""
+    return any(
+        item.lower() in SENSITIVE_DATA_TYPES
+        for item in component.stores + component.handles
+    )
+
+
 def _component_threats(component: Component, exposed: bool) -> List[Threat]:
     threats: List[Threat] = []
     has_data = bool(component.stores or component.handles)
+    has_sensitive = component_has_sensitive_data(component)
+    is_privileged = (
+        component.environment in {"k8s", "container", "vm"}
+        or component.component_type in {"api", "gateway", "load-balancer"}
+    )
+    score = int(exposed) + int(has_sensitive) + int(is_privileged)
+    severity = [Severity.LOW, Severity.MEDIUM, Severity.HIGH, Severity.CRITICAL][score]
 
     if exposed or component.component_type in {"api", "gateway", "load-balancer"}:
         threats.append(
@@ -258,6 +310,7 @@ def _component_threats(component: Component, exposed: bool) -> List[Threat]:
                     "Enforce strong authentication and caller identity verification",
                     "Use mutual TLS or service identity tokens",
                 ],
+                severity=severity,
             )
         )
 
@@ -272,6 +325,7 @@ def _component_threats(component: Component, exposed: bool) -> List[Threat]:
                     "Use integrity checks such as checksums or signatures",
                     "Restrict write access to authorized actors",
                 ],
+                severity=severity,
             )
         )
 
@@ -286,6 +340,7 @@ def _component_threats(component: Component, exposed: bool) -> List[Threat]:
                     "Include non-repudiable timestamps and identities",
                     "Protect logs from tampering",
                 ],
+                severity=severity,
             )
         )
 
@@ -300,6 +355,7 @@ def _component_threats(component: Component, exposed: bool) -> List[Threat]:
                     "Apply least-privilege and need-to-know access",
                     "Mask, tokenize, or redact sensitive fields",
                 ],
+                severity=severity,
             )
         )
 
@@ -314,13 +370,11 @@ def _component_threats(component: Component, exposed: bool) -> List[Threat]:
                     "Use DDoS protection, autoscaling, and load balancing",
                     "Apply resource quotas and circuit breakers",
                 ],
+                severity=severity,
             )
         )
 
-    if (
-        component.environment in {"k8s", "container", "vm"}
-        or component.component_type in {"api", "service"}
-    ):
+    if exposed or has_data or component.component_type in {"api", "gateway", "load-balancer"}:
         threats.append(
             Threat(
                 kind=ThreatKind.ELEVATION_OF_PRIVILEGE,
@@ -331,6 +385,7 @@ def _component_threats(component: Component, exposed: bool) -> List[Threat]:
                     "Use sandboxed or isolated execution environments",
                     "Regularly patch and harden host and container images",
                 ],
+                severity=severity,
             )
         )
 
@@ -341,18 +396,25 @@ def _flow_threats(flow: DataFlow, crossing: bool, sensitive: bool) -> List[Threa
     base = f"Data flow {flow.id} from {flow.source} to {flow.target}"
     threats: List[Threat] = []
 
+    insecure = not _is_secure_protocol(flow.protocol)
+    score = int(crossing) + int(sensitive) + int(insecure)
+    severity = [Severity.LOW, Severity.MEDIUM, Severity.HIGH, Severity.CRITICAL][score]
+
     spoof_mitigations = [
         "Validate the source identity before processing",
         "Use mutual TLS or signed tokens for callers",
     ]
     if not flow.auth:
         spoof_mitigations.insert(0, "Require authentication for this flow")
+    spoof_status = ThreatStatus.MITIGATED if flow.auth else ThreatStatus.OPEN
     threats.append(
         Threat(
             kind=ThreatKind.SPOOFING,
             target=flow.id,
             description=f"{base} may be spoofed",
             mitigations=spoof_mitigations,
+            status=spoof_status,
+            severity=severity,
         )
     )
 
@@ -362,12 +424,15 @@ def _flow_threats(flow: DataFlow, crossing: bool, sensitive: bool) -> List[Threa
     ]
     if not _is_secure_protocol(flow.protocol):
         tamper_mitigations.insert(0, "Encrypt the channel with TLS")
+    tamper_status = ThreatStatus.MITIGATED if _is_secure_protocol(flow.protocol) else ThreatStatus.OPEN
     threats.append(
         Threat(
             kind=ThreatKind.TAMPERING,
             target=flow.id,
             description=f"{base} may be tampered with in transit",
             mitigations=tamper_mitigations,
+            status=tamper_status,
+            severity=severity,
         )
     )
 
@@ -381,6 +446,7 @@ def _flow_threats(flow: DataFlow, crossing: bool, sensitive: bool) -> List[Threa
                 "Protect logs from tampering",
                 "Include non-repudiable timestamps",
             ],
+            severity=severity,
         )
     )
 
@@ -392,12 +458,15 @@ def _flow_threats(flow: DataFlow, crossing: bool, sensitive: bool) -> List[Threa
         info_mitigations.insert(0, "Encrypt data in transit using TLS")
     if sensitive:
         info_mitigations.insert(0, "Mask or tokenize sensitive data fields")
+    info_status = ThreatStatus.MITIGATED if (_is_secure_protocol(flow.protocol) and not sensitive) else ThreatStatus.OPEN
     threats.append(
         Threat(
             kind=ThreatKind.INFORMATION_DISCLOSURE,
             target=flow.id,
             description=f"{base} may leak sensitive information",
             mitigations=info_mitigations,
+            status=info_status,
+            severity=severity,
         )
     )
 
@@ -414,6 +483,7 @@ def _flow_threats(flow: DataFlow, crossing: bool, sensitive: bool) -> List[Threa
             target=flow.id,
             description=f"{base} may be used to deny service",
             mitigations=dos_mitigations,
+            severity=severity,
         )
     )
 
@@ -424,12 +494,15 @@ def _flow_threats(flow: DataFlow, crossing: bool, sensitive: bool) -> List[Threa
     ]
     if not flow.auth:
         elevation_mitigations.insert(0, "Enforce authentication before authorization")
+    elevation_status = ThreatStatus.OPEN
     threats.append(
         Threat(
             kind=ThreatKind.ELEVATION_OF_PRIVILEGE,
             target=flow.id,
             description=f"{base} may allow privilege escalation",
             mitigations=elevation_mitigations,
+            status=elevation_status,
+            severity=severity,
         )
     )
 

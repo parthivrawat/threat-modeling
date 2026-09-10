@@ -1,5 +1,7 @@
 # Threat Modeling as Code
 
+Current version: **1.1.0**
+
 A multi-language **Threat Modeling as Code** library. Express systems as
 components, trust boundaries, and data flows, then analyze them with the
 **STRIDE** methodology to get actionable, version-controlled mitigations.

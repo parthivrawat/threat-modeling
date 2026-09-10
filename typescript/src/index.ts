@@ -7,12 +7,26 @@ export enum ThreatKind {
   ElevationOfPrivilege = 'ElevationOfPrivilege',
 }
 
+export enum ThreatStatus {
+  Open = 'Open',
+  Mitigated = 'Mitigated',
+}
+
+export enum Severity {
+  Low = 'Low',
+  Medium = 'Medium',
+  High = 'High',
+  Critical = 'Critical',
+}
+
 export class Threat {
   constructor(
     public readonly kind: ThreatKind,
     public readonly target: string,
     public readonly description: string,
     public readonly mitigations: string[] = [],
+    public readonly status: ThreatStatus = ThreatStatus.Open,
+    public readonly severity: Severity = Severity.Low,
   ) {}
 
   toString(): string {
@@ -112,16 +126,39 @@ const SENSITIVE_DATA_TYPES: Set<string> = new Set([
 const SECURE_PROTOCOLS: Set<string> = new Set(['https', 'tls', 'mtls', 'ssh']);
 
 function flowHasSensitiveData(flow: DataFlow): boolean {
-  return flow.dataTypes.some((d) => SENSITIVE_DATA_TYPES.has(d));
+  return flow.dataTypes.some((d) => SENSITIVE_DATA_TYPES.has(d.toLowerCase()));
 }
 
 function isSecureProtocol(protocol: string): boolean {
   return SECURE_PROTOCOLS.has(protocol.toLowerCase());
 }
 
+function componentHasSensitiveData(component: Component): boolean {
+  return [...component.stores, ...component.handles].some((d) =>
+    SENSITIVE_DATA_TYPES.has(d.toLowerCase()),
+  );
+}
+
+function severityFromScore(score: number): Severity {
+  if (score >= 3) return Severity.Critical;
+  if (score === 2) return Severity.High;
+  if (score === 1) return Severity.Medium;
+  return Severity.Low;
+}
+
 function componentThreats(component: Component, exposed: boolean): Threat[] {
   const threats: Threat[] = [];
   const hasData = component.stores.length > 0 || component.handles.length > 0;
+  const hasSensitive = componentHasSensitiveData(component);
+  const isPrivileged =
+    component.environment === 'k8s' ||
+    component.environment === 'container' ||
+    component.environment === 'vm' ||
+    component.type === 'api' ||
+    component.type === 'gateway' ||
+    component.type === 'load-balancer';
+  const score = Number(exposed) + Number(hasSensitive) + Number(isPrivileged);
+  const severity = severityFromScore(score);
 
   if (exposed || component.type === 'api' || component.type === 'gateway' || component.type === 'load-balancer') {
     threats.push(
@@ -133,6 +170,8 @@ function componentThreats(component: Component, exposed: boolean): Threat[] {
           'Enforce strong authentication and caller identity verification',
           'Use mutual TLS or service identity tokens',
         ],
+        ThreatStatus.Open,
+        severity,
       ),
     );
   }
@@ -148,6 +187,8 @@ function componentThreats(component: Component, exposed: boolean): Threat[] {
           'Use integrity checks such as checksums or signatures',
           'Restrict write access to authorized actors',
         ],
+        ThreatStatus.Open,
+        severity,
       ),
     );
   }
@@ -163,6 +204,8 @@ function componentThreats(component: Component, exposed: boolean): Threat[] {
           'Include non-repudiable timestamps and identities',
           'Protect logs from tampering',
         ],
+        ThreatStatus.Open,
+        severity,
       ),
     );
   }
@@ -178,6 +221,8 @@ function componentThreats(component: Component, exposed: boolean): Threat[] {
           'Apply least-privilege and need-to-know access',
           'Mask, tokenize, or redact sensitive fields',
         ],
+        ThreatStatus.Open,
+        severity,
       ),
     );
   }
@@ -193,16 +238,18 @@ function componentThreats(component: Component, exposed: boolean): Threat[] {
           'Use DDoS protection, autoscaling, and load balancing',
           'Apply resource quotas and circuit breakers',
         ],
+        ThreatStatus.Open,
+        severity,
       ),
     );
   }
 
   if (
-    component.environment === 'k8s' ||
-    component.environment === 'container' ||
-    component.environment === 'vm' ||
+    exposed ||
+    hasData ||
     component.type === 'api' ||
-    component.type === 'service'
+    component.type === 'gateway' ||
+    component.type === 'load-balancer'
   ) {
     threats.push(
       new Threat(
@@ -214,6 +261,8 @@ function componentThreats(component: Component, exposed: boolean): Threat[] {
           'Use sandboxed or isolated execution environments',
           'Regularly patch and harden host and container images',
         ],
+        ThreatStatus.Open,
+        severity,
       ),
     );
   }
@@ -224,6 +273,9 @@ function componentThreats(component: Component, exposed: boolean): Threat[] {
 function flowThreats(flow: DataFlow, crossing: boolean, sensitive: boolean): Threat[] {
   const base = `Data flow ${flow.id} from ${flow.source} to ${flow.target}`;
   const threats: Threat[] = [];
+  const insecure = !isSecureProtocol(flow.protocol);
+  const score = Number(crossing) + Number(sensitive) + Number(insecure);
+  const severity = severityFromScore(score);
 
   const spoofMits = [
     'Validate the source identity before processing',
@@ -232,7 +284,16 @@ function flowThreats(flow: DataFlow, crossing: boolean, sensitive: boolean): Thr
   if (!flow.auth) {
     spoofMits.unshift('Require authentication for this flow');
   }
-  threats.push(new Threat(ThreatKind.Spoofing, flow.id, `${base} may be spoofed`, spoofMits));
+  threats.push(
+    new Threat(
+      ThreatKind.Spoofing,
+      flow.id,
+      `${base} may be spoofed`,
+      spoofMits,
+      flow.auth ? ThreatStatus.Mitigated : ThreatStatus.Open,
+      severity,
+    ),
+  );
 
   const tampMits = [
     'Validate message integrity',
@@ -241,7 +302,16 @@ function flowThreats(flow: DataFlow, crossing: boolean, sensitive: boolean): Thr
   if (!isSecureProtocol(flow.protocol)) {
     tampMits.unshift('Encrypt the channel with TLS');
   }
-  threats.push(new Threat(ThreatKind.Tampering, flow.id, `${base} may be tampered with in transit`, tampMits));
+  threats.push(
+    new Threat(
+      ThreatKind.Tampering,
+      flow.id,
+      `${base} may be tampered with in transit`,
+      tampMits,
+      isSecureProtocol(flow.protocol) ? ThreatStatus.Mitigated : ThreatStatus.Open,
+      severity,
+    ),
+  );
 
   threats.push(
     new Threat(
@@ -253,6 +323,8 @@ function flowThreats(flow: DataFlow, crossing: boolean, sensitive: boolean): Thr
         'Protect logs from tampering',
         'Include non-repudiable timestamps',
       ],
+      ThreatStatus.Open,
+      severity,
     ),
   );
 
@@ -266,7 +338,18 @@ function flowThreats(flow: DataFlow, crossing: boolean, sensitive: boolean): Thr
   if (sensitive) {
     infoMits.unshift('Mask or tokenize sensitive data fields');
   }
-  threats.push(new Threat(ThreatKind.InformationDisclosure, flow.id, `${base} may leak sensitive information`, infoMits));
+  threats.push(
+    new Threat(
+      ThreatKind.InformationDisclosure,
+      flow.id,
+      `${base} may leak sensitive information`,
+      infoMits,
+      isSecureProtocol(flow.protocol) && !flowHasSensitiveData(flow)
+        ? ThreatStatus.Mitigated
+        : ThreatStatus.Open,
+      severity,
+    ),
+  );
 
   const dosMits = [
     'Implement rate limiting and throttling',
@@ -276,7 +359,16 @@ function flowThreats(flow: DataFlow, crossing: boolean, sensitive: boolean): Thr
   if (!crossing) {
     dosMits.push('Validate internal callers to prevent resource abuse');
   }
-  threats.push(new Threat(ThreatKind.DenialOfService, flow.id, `${base} may be used to deny service`, dosMits));
+  threats.push(
+    new Threat(
+      ThreatKind.DenialOfService,
+      flow.id,
+      `${base} may be used to deny service`,
+      dosMits,
+      ThreatStatus.Open,
+      severity,
+    ),
+  );
 
   const eleMits = [
     'Authorize every request',
@@ -286,7 +378,16 @@ function flowThreats(flow: DataFlow, crossing: boolean, sensitive: boolean): Thr
   if (!flow.auth) {
     eleMits.unshift('Enforce authentication before authorization');
   }
-  threats.push(new Threat(ThreatKind.ElevationOfPrivilege, flow.id, `${base} may allow privilege escalation`, eleMits));
+  threats.push(
+    new Threat(
+      ThreatKind.ElevationOfPrivilege,
+      flow.id,
+      `${base} may allow privilege escalation`,
+      eleMits,
+      ThreatStatus.Open,
+      severity,
+    ),
+  );
 
   return threats;
 }
@@ -324,6 +425,16 @@ export class Model {
     if (this.boundaries.has(boundary.id)) {
       throw new Error(`Boundary ID already exists: ${boundary.id}`);
     }
+    for (const componentId of boundary.contains) {
+      if (!this.components.has(componentId)) {
+        throw new Error(`Boundary ${boundary.id} references unknown component ${componentId}`);
+      }
+    }
+    for (const componentId of boundary.trusts) {
+      if (!this.components.has(componentId)) {
+        throw new Error(`Boundary ${boundary.id} references unknown component ${componentId}`);
+      }
+    }
     this.boundaries.set(boundary.id, boundary);
   }
 
@@ -333,6 +444,12 @@ export class Model {
     }
     if (flow.source === flow.target) {
       throw new Error(`Data flow ${flow.id} is self-referential`);
+    }
+    if (!this.components.has(flow.source)) {
+      throw new Error(`Data flow ${flow.id} has unknown source ${flow.source}`);
+    }
+    if (!this.components.has(flow.target)) {
+      throw new Error(`Data flow ${flow.id} has unknown target ${flow.target}`);
     }
     this.flows.set(flow.id, flow);
   }
