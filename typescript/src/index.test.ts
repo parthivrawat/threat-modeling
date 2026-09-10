@@ -80,7 +80,7 @@ describe('Model.analyze', () => {
     expect(byKind.get(ThreatKind.Spoofing)).toBe(ThreatStatus.Mitigated);
     expect(byKind.get(ThreatKind.Tampering)).toBe(ThreatStatus.Mitigated);
     expect(byKind.get(ThreatKind.InformationDisclosure)).toBe(ThreatStatus.Mitigated);
-    expect(byKind.get(ThreatKind.ElevationOfPrivilege)).toBe(ThreatStatus.Mitigated);
+    expect(byKind.get(ThreatKind.ElevationOfPrivilege)).toBe(ThreatStatus.Open);
     expect(byKind.get(ThreatKind.Repudiation)).toBe(ThreatStatus.Open);
     expect(byKind.get(ThreatKind.DenialOfService)).toBe(ThreatStatus.Open);
   });

@@ -41,7 +41,7 @@ import (
 func main() {
     m := threatmodel.New("payment-api")
 
-    if err := m.AddComponent(threatmodel.NewComponent("api", "Payment API", threatmodel.&ComponentOpts{
+    if err := m.AddComponent(threatmodel.NewComponent("api", "Payment API", &threatmodel.ComponentOpts{
         Type:        "api",
         Environment: "k8s",
         Stores:      []string{"user-data"},
@@ -50,14 +50,14 @@ func main() {
         log.Fatal(err)
     }
 
-    if err := m.AddBoundary(threatmodel.NewBoundary("internet", "Internet", threatmodel.&BoundaryOpts{
+    if err := m.AddBoundary(threatmodel.NewBoundary("internet", "Internet", &threatmodel.BoundaryOpts{
         Untrusted: true,
         Trusts:    []string{"api"},
     })); err != nil {
         log.Fatal(err)
     }
 
-    if err := m.AddDataFlow(threatmodel.NewDataFlow("request", "browser", "api", threatmodel.&FlowOpts{
+    if err := m.AddDataFlow(threatmodel.NewDataFlow("request", "browser", "api", &threatmodel.FlowOpts{
         Protocol:  "https",
         Auth:      "bearer",
         DataTypes: []string{"payment-card"},

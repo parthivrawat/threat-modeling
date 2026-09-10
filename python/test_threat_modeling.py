@@ -116,7 +116,7 @@ def test_flow_mitigated_status():
     assert threats[ThreatKind.SPOOFING].status == ThreatStatus.MITIGATED
     assert threats[ThreatKind.TAMPERING].status == ThreatStatus.MITIGATED
     assert threats[ThreatKind.INFORMATION_DISCLOSURE].status == ThreatStatus.OPEN
-    assert threats[ThreatKind.ELEVATION_OF_PRIVILEGE].status == ThreatStatus.MITIGATED
+    assert threats[ThreatKind.ELEVATION_OF_PRIVILEGE].status == ThreatStatus.OPEN
     assert threats[ThreatKind.REPUDIATION].status == ThreatStatus.OPEN
     assert threats[ThreatKind.DENIAL_OF_SERVICE].status == ThreatStatus.OPEN
 

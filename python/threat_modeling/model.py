@@ -494,7 +494,7 @@ def _flow_threats(flow: DataFlow, crossing: bool, sensitive: bool) -> List[Threa
     ]
     if not flow.auth:
         elevation_mitigations.insert(0, "Enforce authentication before authorization")
-    elevation_status = ThreatStatus.MITIGATED if flow.auth else ThreatStatus.OPEN
+    elevation_status = ThreatStatus.OPEN
     threats.append(
         Threat(
             kind=ThreatKind.ELEVATION_OF_PRIVILEGE,

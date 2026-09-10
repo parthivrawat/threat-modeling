@@ -79,7 +79,7 @@ For **DataFlow** threats:
 | Spoofing | `auth` is non-empty. |
 | Tampering | `protocol` is one of `https`, `tls`, `mtls`, `ssh`. |
 | Information Disclosure | `protocol` is secure AND the flow does not carry sensitive data. |
-| Elevation of Privilege | `auth` is non-empty. |
+| Elevation of Privilege | — (no authorization control modeled; always `Open`). |
 | Repudiation | — (no control modeled; always `Open`). |
 | Denial of Service | — (no control modeled; always `Open`). |
 
@@ -168,10 +168,10 @@ The canonical field names in this spec may use a different identifier in each po
 
 All four implementations support these methods on `Model`:
 
-- `add_component(component) / AddComponent` / `add_component`
-- `add_boundary(boundary) / AddBoundary` / `add_boundary`
-- `add_data_flow(flow) / AddDataFlow` / `add_data_flow`
-- `analyze() -> Threat[]` / `[]*Threat` / `Result<Vec<Threat>>`
+- `AddComponent` (Go), `add_component` (Python, Rust), `addComponent` (TypeScript)
+- `AddBoundary` (Go), `add_boundary` (Python, Rust), `addBoundary` (TypeScript)
+- `AddDataFlow` (Go), `add_data_flow` (Python, Rust), `addDataFlow` (TypeScript)
+- `Analyze` (Go), `analyze` (Python, Rust, TypeScript)
 
 The `add` dispatcher is supported in Python (`model.add(item)`), TypeScript (`model.add(item)`), Rust (`model.add(item)`), and Go (`model.Add(item any) error`).
 
@@ -192,7 +192,7 @@ All implementations must validate:
 - Data flow source and target exist and are not the same component.
 - Boundary `contains` and `trusts` reference existing components.
 
-Validation may happen at `analyze()` time or at addition time, but it must produce clear, actionable errors.
+Validation happens eagerly when an item is added. `add` methods reject duplicate IDs, invalid boundaries, and invalid data flows with clear, actionable errors. `analyze()` performs a final validation pass for models that are analyzed directly.
 
 ## Versioning
 

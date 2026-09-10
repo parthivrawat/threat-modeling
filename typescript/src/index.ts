@@ -384,7 +384,7 @@ function flowThreats(flow: DataFlow, crossing: boolean, sensitive: boolean): Thr
       flow.id,
       `${base} may allow privilege escalation`,
       eleMits,
-      flow.auth ? ThreatStatus.Mitigated : ThreatStatus.Open,
+      ThreatStatus.Open,
       severity,
     ),
   );

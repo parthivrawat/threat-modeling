@@ -93,14 +93,27 @@ func TestDataFlowThreats(t *testing.T) {
 		t.Fatalf("Analyze: %v", err)
 	}
 
-	foundInfo := false
+	foundInfo, foundSpoof, foundTamp := false, false, false
 	for _, th := range threats {
-		if th.Target == "login" && th.Kind == InformationDisclosure {
-			foundInfo = true
+		if th.Target == "login" {
+			switch th.Kind {
+			case InformationDisclosure:
+				foundInfo = true
+			case Spoofing:
+				foundSpoof = true
+			case Tampering:
+				foundTamp = true
+			}
 		}
 	}
 	if !foundInfo {
 		t.Errorf("expected InformationDisclosure threat for login flow")
+	}
+	if !foundSpoof {
+		t.Errorf("expected Spoofing threat for login flow")
+	}
+	if !foundTamp {
+		t.Errorf("expected Tampering threat for login flow")
 	}
 }
 
@@ -189,12 +202,20 @@ func TestDataFlowMitigated(t *testing.T) {
 		t.Fatalf("Analyze: %v", err)
 	}
 
+	found := map[ThreatKind]bool{}
 	for _, th := range threats {
 		if th.Target == "login" && (th.Kind == Spoofing || th.Kind == Tampering) {
+			found[th.Kind] = true
 			if th.Status != ThreatStatusMitigated {
 				t.Errorf("expected %s on login to be Mitigated, got %s", th.Kind, th.Status)
 			}
 		}
+	}
+	if !found[Spoofing] {
+		t.Errorf("expected Spoofing threat for login flow")
+	}
+	if !found[Tampering] {
+		t.Errorf("expected Tampering threat for login flow")
 	}
 }
 

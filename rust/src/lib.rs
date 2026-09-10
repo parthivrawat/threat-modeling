@@ -686,7 +686,7 @@ fn flow_threats(flow: &DataFlow, crossing: bool, sensitive: bool) -> Vec<Threat>
     let spoof_status = if auth_set { ThreatStatus::Mitigated } else { ThreatStatus::Open };
     let tamp_status = if secure { ThreatStatus::Mitigated } else { ThreatStatus::Open };
     let info_status = if secure && !sensitive { ThreatStatus::Mitigated } else { ThreatStatus::Open };
-    let ele_status = if auth_set { ThreatStatus::Mitigated } else { ThreatStatus::Open };
+    let ele_status = ThreatStatus::Open;
 
     let insecure = !is_secure_protocol(&flow.protocol);
     let severity = match (crossing as u8) + (sensitive as u8) + (insecure as u8) {
@@ -893,7 +893,7 @@ mod tests {
         assert_eq!(flow_status[&ThreatKind::Tampering], ThreatStatus::Mitigated);
         assert_eq!(
             flow_status[&ThreatKind::ElevationOfPrivilege],
-            ThreatStatus::Mitigated
+            ThreatStatus::Open
         );
     }
 

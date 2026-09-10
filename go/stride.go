@@ -334,16 +334,12 @@ func appendFlowThreats(out []*Threat, f *DataFlow, crossing, sensitive bool) []*
 	if f.Auth == "" {
 		eleMits = append([]string{"Enforce authentication before authorization"}, eleMits...)
 	}
-	eleStatus := ThreatStatusOpen
-	if f.Auth != "" {
-		eleStatus = ThreatStatusMitigated
-	}
 	out = append(out, &Threat{
 		Kind:        ElevationOfPrivilege,
 		Target:      f.ID,
 		Description: base + " may allow privilege escalation",
 		Mitigations: eleMits,
-		Status:      eleStatus,
+		Status:      ThreatStatusOpen,
 		Severity:    sev,
 	})
 
